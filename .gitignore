@@ -102,3 +102,12 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# data folder
+data
+
+# book
+Deep_Learning_with_PyTorch_*.pdf
+
+# original code
+dlwpt-code-master
