@@ -105,6 +105,7 @@ venv.bak/
 
 # data folder
 data
+data-unversioned
 
 # book
 Deep_Learning_with_PyTorch_*.pdf
