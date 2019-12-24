@@ -111,7 +111,7 @@ class Ct:
         slice_list = []
         for axis, center_val in enumerate(center_irc):
             start_ndx = int(round(center_val - width_irc[axis] / 2))
-            end_idx = int(start_ndx + width_irc[axis])
+            end_ndx = int(start_ndx + width_irc[axis])
 
             assert center_val >= 0 and center_val < self.ary.shape[axis], \
                 repr([self.series_uid, center_xyz, self.origin_xyz,
@@ -144,7 +144,8 @@ def getCtRawNodule(series_uid, center_xyz, width_irc):
 
 
 class LunaDataset(Dataset):
-    def __init__(self, test_stride=0, isTestSet_bool=None, series_uid=None):
+    def __init__(self, test_stride=0, isTestSet_bool=None, series_uid=None,
+                 sortby_str='random'):
         self.noduleInfo_list = copy.copy(getNoduleInfoList())
 
         if series_uid:
