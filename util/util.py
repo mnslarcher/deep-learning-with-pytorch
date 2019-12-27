@@ -4,17 +4,29 @@ import datetime
 import gc
 import time
 
-import numpy as np 
+import numpy as np
 
 from util.logconf import logging
 
 log = logging.getLogger(__name__)
+# log.setLevel(logging.WARN)
+# log.setLevel(logging.INFO)
 log.setLevel(logging.DEBUG)
 
+# Irc stay for index, row and column. Xyz are the patient
+# coordinates. x represent the right to left direction, y the
+# anterior to posterior direction and z the inferior to superior
+# direction.
+# Usually the row and column dimensions have voxel sizes that are
+# the same, and the index dimension has a larger value.
+# Commonly, CTs are 512 rows by 512 columns, with the index
+# dimension ranging from around 100 total slices up to perhaps 250
+# slices.
 IrcTuple = collections.namedtuple('IrcTuple', ['index', 'row', 'col'])
 XyzTuple = collections.namedtuple('XyzTuple', ['x', 'y', 'z'])
 
-
+# The following function apply a scaling factor to produce images with
+#  realistic proportions.
 def xyz2irc(coord_xyz, origin_xyz, vxSize_xyz, direction_tup):
     if direction_tup == (1, 0, 0, 0, 1, 0, 0, 0, 1):
         direction_ary = np.ones((3,))
@@ -54,10 +66,12 @@ def importstr(module_str, from_=None):
     <built-in function fabs>
     """
     if from_ is None and ':' in module_str:
+        # In this case rsplit is equivalment to split
         module_str, from_ = module_str.rsplit(':')
 
     module = __import__(module_str)
     for sub_str in module_str.split('.')[1:]:
+        # getattr(module, sub_str) is equivalent to module.sub_str
         module = getattr(module, sub_str)
 
     if from_:
@@ -76,15 +90,14 @@ def prhist(ary, prefix_str=None, **kwargs):
         prefix_str += ' '
 
     count_ary, bins_ary = np.histogram(ary, **kwargs)
-
     for i in range(count_ary.shape[0]):
-        print("{}{:-8.2f}".format(prefix_str, bins_ary[i]), 
+        print("{}{:-8.2f}".format(prefix_str, bins_ary[i]),
               "{:-10}".format(count_ary[i]))
-        
+
     print("{}{:-8.2f}".format(prefix_str, bins_ary[-1]))
 
 
-def enumerateWithEstimate(iter, desc_str, start_ndx=0, print_ndx=4, 
+def enumerateWithEstimate(iter, desc_str, start_ndx=0, print_ndx=4,
                           backoff=2, iter_len=None):
     """
     In terms of behavior, `enumerateWithEstimate` is almost identical
@@ -156,11 +169,9 @@ def enumerateWithEstimate(iter, desc_str, start_ndx=0, print_ndx=4,
     for (current_ndx, item) in enumerate(iter):
         yield (current_ndx, item)
         if current_ndx == print_ndx:
-            # ... <1>
-            duration_sec = ((time.time() - start_ts)
-                            / (current_ndx - start_ndx + 1)
-                            * (iter_len-start_ndx)
-                            )
+            duration_sec = ((time.time() - start_ts) /
+                            (current_ndx - start_ndx + 1)
+                            * (iter_len - start_ndx))
 
             done_dt = datetime.datetime.fromtimestamp(start_ts + duration_sec)
             done_td = datetime.timedelta(seconds=duration_sec)
