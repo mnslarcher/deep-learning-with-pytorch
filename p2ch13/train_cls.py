@@ -200,6 +200,7 @@ class LunaTrainingApp():
         train_dl = self.initTrainDl()
         val_dl = self.initValDl()
 
+        best_score = 0.0
         for epoch_ndx in range(1, self.cli_args.epochs + 1):
             log.info("Epoch {} of {}, {}/{} batches of size {}*{}".format(
                 epoch_ndx,
@@ -330,7 +331,8 @@ class LunaTrainingApp():
 
         log.info(("E{} {:8} {loss/all:.4f} loss, "
                   "{correct/all:-5.1f}% correct, "
-                  "{pr/precision:.4f} recall, "
+                  "{pr/precision:.4f} precision, "
+                  "{pr/recall:.4f} recall, "
                   "{pr/f1_score:.4f} f1 score").format(epoch_ndx,
                                                        mode_str,
                                                        **metrics_dict))
@@ -380,9 +382,10 @@ class LunaTrainingApp():
                 bins=bins
             )
 
-        score = 1 + metrics_t['pr/f1_score'] \
-            - metrics_t['loss/mal'] * 0.01 \
-            - metrics_t['loss/all'] * 0.0001
+        score = 1 \
+            + metrics_dict['pr/f1_score'] \
+            - metrics_dict['loss/mal'] * 0.01 \
+            - metrics_dict['loss/all'] * 0.0001
 
         return score
 
@@ -410,7 +413,8 @@ class LunaTrainingApp():
         state = {
             'model_state': model.state_dict(),
             'model_name': type(model).__name__,
-            'optimizer_state': type(self.optimizer).__name__,
+            'optimizer_state': self.optimizer.state_dict(),
+            'optimizer_name': type(self.optimizer).__name__,
             'epoch': epoch_ndx,
             'totalTrainingSamples_count': self.totalTrainingSamples_count,
         }
