@@ -30,6 +30,10 @@ raw_cache = getCache('part2ch13_raw')
 
 NoduleInfoTuple = namedtuple('NoduleInfoTuple', 'isMalignant_bool',
                              'diameter_mm', 'series_uid', 'center_xyz')
+MaskTuple = namedtuple('MaskTuple', 'raw_dense_mask', 'body_mask', 'air_mask',
+                       'raw_nodule_mask', 'nodule_mask', 'lung_mask',
+                       'mal_mask')
+
 
 # Decorator to wrap a function with a memoizing callable that saves up
 # to the maxsize most recent calls. It can save time when an expensive
@@ -92,12 +96,13 @@ def getNoduleInfoList(requireDataOnDisk_bool=True):
     # Put first the malignant nodules sorted from the smallest to the
     # largest
     noduleInfo_list.sort(reverse=True)
+
     return noduleInfo_list
 
 
 # Ct is used to load individual CT scans
 class Ct:
-    def __init__(self, series_uid):
+    def __init__(self, series_uid, buildMasks_bool=True):
         mhd_path = glob.glob("data-unversioned/part2/luna/subset*/{}.mhd"
                              .format(series_uid))[0]
 
@@ -132,6 +137,126 @@ class Ct:
         self.direction_tup = tuple(int(round(x)) for x in
                                    ct_mhd.GetDirection())
 
+        noduleInfo_list = getNoduleInfoList()
+        # List of benign nodules for a specific CT scan
+        self.benignInfo_list = [ni_tup for ni_tup in noduleInfo_list
+                                if not ni_tup.isMalignant_bool
+                                and ni_tup.series_uid == self.series_uid]
+        self.benign_mask = self.buildAnnotationMask(self.benignInfo_list)[0]
+        self.benign_indexes = sorted(set(self.benign_mask.nonzero()[0]))
+
+        # List of malignant nodules for a specific CT scan
+        self.malignantInfo_list = [ni_tup for ni_tup in noduleInfo_list
+                                   if ni_tup.isMalignant_bool
+                                   and ni_tup.series_uid == self.series_uid]
+        self.malignant_mask = self.buildAnnotationMask(
+            self.malignantInfo_list)[0]
+        self.malignant_indexes = sorted(set(self.malignant_mask.nonzero()[0]))
+
+    def buildAnnotationMask(self, noduleInfo_list, threshold_hu=-500):
+        boundingBox_a = np.zeros_like(self.hu_a, dtype=np.bool)
+
+        for noduleInfo_tup in noduleInfo_list:
+            center_irc = xyz2irc(
+                noduleInfo_tup.center_xyz,
+                self.origin_xyz,
+                self.vxSize_xyz,
+                self.direction_tup
+            )
+            ci = int(center_irc.index)
+            cr = int(center_irc.row)
+            cc = int(center_irc.col)
+            radius = 2
+
+            # Index
+            ci_min = ci - radius
+            ci_max = ci + radius
+            try:
+                while self.hu_a[ci_max, cr, cc] > threshold_hu and \
+                        self.hu_a[ci_min, cr, cc] > threshold_hu:
+                    ci_min -= 1
+                    ci_max += 1
+            except IndexError:
+                ci_min += 1
+                ci_max -= 1
+
+            # Row
+            cr_min = ci - radius
+            cr_max = ci + radius
+            try:
+                while self.hu_a[ci, cr_max, cc] > threshold_hu and \
+                        self.hu_a[ci, cr_max, cc] > threshold_hu:
+                    cr_min -= 1
+                    cr_max += 1
+            except IndexError:
+                cr_min += 1
+                cr_max -= 1
+
+            # Column
+            cc_min = ci - radius
+            cc_max = ci + radius
+            try:
+                while self.hu_a[ci, cr, cc_max] > threshold_hu and \
+                        self.hu_a[ci, cr, cc_min] > threshold_hu:
+                    cc_min -= 1
+                    cc_max += 1
+            except IndexError:
+                cc_min += 1
+                cc_max -= 1
+
+            slice_tup = (
+                slice(ci - radius, ci + radius + 1),
+                slice(ci - radius, ci + radius + 1),
+                slice(ci - radius, ci + radius + 1),
+            )
+            boundingBox_a[slice_tup] = True
+
+        thresholded_a = boundingBox_a & (self.hu_a > threshold_hu)
+        # Every "False" next to a "True" is converted to "True".
+        # iterations=2 means that the process is repeted two times.
+        mask_a = morph.binary_dilation(thresholded_a, iterations=2)
+
+        return mask_a, thresholded_a, boundingBox_a
+
+    def build2dLungMask(self, mask_ndx):
+        """Return a MaskTuple with different masks."""
+        raw_dense_mask = self.hu_a[mask_ndx] > -300
+        # The closing of an input image by a structuring element is the
+        # erosion of the dilation of the image by the structuring
+        # element.
+        # This operation try to fill holes.
+        dense_mask = morph.binary_closing(raw_dense_mask, iterations=2)
+        # The opening of an input image by a structuring element is the
+        # dilation of the erosion of the image by the structuring
+        # element.
+        # This operation try to remove small isolated blocks.
+        dense_mask = morph.binary_opening(dense_mask, iterations=2)
+
+        body_mask = morph.binary_fill_holes(dense_mask)
+        air_mask = morph.binary_fill_holes(body_mask & ~dense_mask)
+        air_mask = morph.binary_erosion(air_mask, iterations=1)
+
+        lung_mask = morph.binary_dilation(air_mask, iterations=5)
+
+        raw_nodule_mask = self.hu_a[mask_ndx] > -600
+        raw_nodule_mask &= air_mask
+        nodule_mask = morph.binary_opening(raw_nodule_mask, iterations=1)
+
+        ben_mask = morph.binary_dilation(nodule_mask, iterations=1)
+        ben_mask &= ~self.malignant_mask[mask_ndx]
+
+        mal_mask = self.malignant_mask[mask_ndx]
+
+        return MaskTuple(raw_dense_mask,
+                         dense_mask,
+                         body_mask,
+                         air_mask,
+                         raw_nodule_mask,
+                         nodule_mask,
+                         lung_mask,
+                         ben_mask,
+                         mal_mask)
+
     def getRawNodule(self, center_xyz, width_irc):
         center_irc = xyz2irc(center_xyz, self.origin_xyz, self.vxSize_xyz,
                              self.direction_tup)
@@ -143,7 +268,7 @@ class Ct:
 
             assert center_val >= 0 and center_val < self.hu_a.shape[axis], \
                 repr([self.series_uid, center_xyz, self.origin_xyz,
-                self.vxSize_xyz, center_irc, axis])
+                      self.vxSize_xyz, center_irc, axis])
 
             if start_ndx < 0:
                 start_ndx = 0
@@ -163,16 +288,29 @@ class Ct:
 # If typed is set to true, function arguments of different types will be
 # cached separately. For example, f(3) and f(3.0) will be treated as
 # distinct calls with distinct results.
-@functools.lru_cache(1, typed=True)
+# See also this: https://www.cameronmacleod.com/blog/python-lru-cache
+ctCache_depth = 5
+@functools.lru_cache(ctCache_depth, typed=True)
 def getCt(series_uid):
+
     return Ct(series_uid)
 
 
+# raw_cache = getCache('part2ch13_raw')
+# See: http://www.grantjenks.com/docs/diskcache/tutorial.html
 @raw_cache.memoize(typed=True)
 def getCtRawNodule(series_uid, center_xyz, width_irc):
     ct = getCt(series_uid)
     ct_chunk, center_irc = ct.getRawNodule(center_xyz, width_irc)
+
     return ct_chunk, center_irc
+
+
+@raw_cache.memoize(typed=True)
+def getCtSampleSize(series_uid):
+    ct = Ct(series_uid, buildMasks_bool=False)
+
+    return len(ct.benign_indexes)
 
 
 def getCtAugmentedNodule(augmentation_dict, series_uid, center_xyz, width_irc,
@@ -254,16 +392,23 @@ class LunaDataset(Dataset):
             self.use_cache = True
 
         if series_uid:
-            self.noduleInfo_list = [x for x in self.noduleInfo_list
-                                    if x[2] == series_uid]
+            self.series_list = [series_uid]
+        else:
+            self.series_list = sorted(set(noduleInfo_tup.series_uid for
+                                          noduleInfo_tup in
+                                          getNoduleInfoList()))
 
         if isValSet_bool:
             assert val_stride > 0, val_stride
-            self.noduleInfo_list = self.noduleInfo_list[::val_stride]
-            assert self.noduleInfo_list
+            self.series_list = self.series_list[::val_stride]
+            assert self.series_list
         elif val_stride > 0:
-            del self.noduleInfo_list[::val_stride]
-            assert self.noduleInfo_list
+            del self.series_list[::val_stride]
+            assert self.series_list
+
+        series_set = set(self.series_list)
+        self.noduleInfo_list = [x for x in self.noduleInfo_list if x.series_uid
+                                in series_set]
 
         if sortby_str == 'random':
             random.shuffle(self.noduleInfo_list)
@@ -296,9 +441,10 @@ class LunaDataset(Dataset):
 
     def __len__(self):
         if self.ratio_int:
+
             return 200000
-        else:
-            return len(self.noduleInfo_list) // 20
+
+        return len(self.noduleInfo_list)
 
     def __getitem__(self, ndx):
         if self.ratio_int:
@@ -336,16 +482,166 @@ class LunaDataset(Dataset):
             ct = getCt(nodule_tup.series_uid)
             nodule_a, center_irc = ct.getRawNodule(
                 nodule_tup.center_xyz,
-                width_irc,
+                width_irc
             )
             nodule_t = torch.from_numpy(nodule_a).to(torch.float32)
             nodule_t = nodule_t.unsqueeze(0)
 
-        malignant_t = torch.tensor([
-            not nodule_tup.isMalignant_bool,
-            nodule_tup.isMalignant_bool
-            ], dtype=torch.long)
+        malignant_t = torch.tensor([not nodule_tup.isMalignant_bool,
+                                    nodule_tup.isMalignant_bool],
+                                   dtype=torch.long)
 
 
         return nodule_t, malignant_t, nodule_tup.series_uid, \
             torch.tensor(center_irc)
+
+
+class PrepcacheLunaDataset(LunaDataset):
+    def __getitem__(self, ndx):
+        nodule_t, malignant_t, series_uid, center_t = super().__getitem__(ndx)
+        getCtSampleSize(series_uid)
+
+        return nodule_t, malignant_t, series_uid, center_t
+
+
+class Luna2dSegmentationDataset(Dataset):
+    def __init__(self, val_stride=0, isValSet_bool=None, series_uid=None,
+                 contextSlices_count=2, augmentation_dict=None,
+                 fullCt_bool=False):
+        self.contextSlices_count = contextSlices_count
+        self.augmentation_dict = augmentation_dict
+
+        if series_uid:
+            self.series_list = [series_uid]
+        else:
+            self.series_list = sorted(set(noduleInfo_tup.series_uid for
+                                          noduleInfo_tup in
+                                          getNoduleInfoList()))
+
+        if isValSet_bool:
+            assert val_stride > 0, val_stride
+            self.series_list = self.series_list[::val_stride]
+            assert self.series_list
+        elif val_stride > 0:
+            del self.series_list[::val_stride]
+            assert self.series_list
+
+        self.sample_list = []
+        for series_uid in self.series_list:
+            if fullCt_bool:
+                self.sample_list.extend([
+                    (series_uid, ct_ndx) for ct_ndx in
+                    range(getCt(series_uid).hu_a.shape[0])
+                ])
+            else:
+                self.sample_list.extend([
+                    (series_uid, ct_ndx) for ct_ndx in
+                    range(getCtSampleSize(series_uid))
+                ])
+
+        # !r calls repr()
+        log.info("{!r}: {} {} series, {} slices".format(
+            self,
+            len(self.series_list),
+            {None: 'general', True: 'validation',
+             False: 'training'}[isValSet_bool],
+            len(self.sample_list)
+        ))
+
+    def __len__(self):
+
+        return len(self.sample_list)
+
+    def __getitem__(self, ndx):
+        if isinstance(ndx, int):
+            series_uid, sample_ndx = \
+                self.sample_list[ndx % len(self.sample_list)]
+            ct = getCt(series_uid)
+            ct_ndx = self.sample_list[sample_ndx][1]
+            useAugmentation_bool = False
+        else:
+            series_uid, ct_ndx, useAugmentation_bool = ndx
+            ct = getCt(series_uid)
+
+        ct_t = torch.zeros((self.contextSlices_count * 2 + 1 + 1,
+                            512, 512))
+
+        start_ndx = ct_ndx - self.contextSlices_count
+        end_ndx = ct_ndx + self.contextSlices_count + 1
+        for i, context_ndx in enumerate(range(start_ndx, end_ndx)):
+            context_ndx = max(context_ndx, 0)
+            context_ndx = min(context_ndx, ct.hu_a.shape[0] - 1)
+
+            ct_t[i] = torch.from_numpy(ct.hu_a[context_ndx].astype(np.float32))
+
+        ct_t /= 1000
+
+        mask_tup = ct.build2dLungMask(ct_ndx)
+
+        ct_t[-1] = torch.from_numpy(mask_tup.lung_mask.astype(np.float32))
+
+        nodule_t = torch.from_numpy((mask_tup.mal_mask | mask_tup.ben_mask)
+                                    .astype(np.float32)).unsqueeze(0)
+        ben_t = torch.from_numpy(mask_tup.ben_mask.astype(np.float32))\
+            .unsqueeze(0)
+        mal_t = torch.from_numpy(mask_tup.mal_mask.astype(np.float32))\
+            .unsqueeze(0)
+        label_int = mal_t.max() + ben_t.max() * 2
+
+        if self.augmentation_dict and useAugmentation_bool:
+            if 'rotate' in self.augmentation_dict:
+                if random.random() > 0.5:
+                    ct_t = ct_t.rot90(1, [1, 2])
+                    nodule_t = nodule_t.rot90(1, [1, 2])
+
+            if 'flip' in self.augmentation_dict:
+                dims = [d + 1 for d in range(2) if random.random() > 0.5]
+
+                if dims:
+                    ct_t = ct_t.flip(dims)
+                    nodule_t = nodule_t.flip(dims)
+
+            if 'noise' in self.augmentation_dict:
+                noise_t = torch.randn_like(ct_t)
+                noise_t *= self.augmentation_dict['noise']
+
+                ct_t += noise_t
+
+        return ct_t, nodule_t, label_int, ben_t, mal_t, ct.series_uid, ct_ndx
+
+
+class TrainingLuna2dSegmentationDataset(Luna2dSegmentationDataset):
+    def __init__(self, *args, batch_size=80, **kwargs):
+        self.needsShuffle_bool = True
+        self.batch_size = batch_size
+        super().__init__(*args, **kwargs)
+
+    def __len__(self):
+
+        return 50000
+
+    def __getitem__(self, ndx):
+        if self.needsShuffle_bool:
+            random.shuffle(self.series_list)
+            self.needsShuffle_bool = False
+
+        if isinstance(ndx, int):
+            if ndx % self.batch_size == 0:
+                self.series_list.append(self.series_list.pop(0))
+
+            series_uid = self.series_list[ndx % ctCache_depth]
+            ct = getCt(series_uid)
+
+            if ndx % 3 == 0:
+                ct_ndx = random.choice(ct.malignant_indexes or
+                                       ct.benign_indexes)
+            elif ndx % 3 == 1:
+                ct_ndx = random.choice(ct.benign_indexes)
+            elif ndx % 3 == 2:
+                ct_ndx = random.choice(list(range(ct.hu_a.shape[0])))
+
+            useAugmentation_bool = True
+        else:
+            series_uid, ct_ndx = useAugmentation_bool = ndx
+
+        return super.__getitem__((series_uid, ct_ndx, useAugmentation_bool))
