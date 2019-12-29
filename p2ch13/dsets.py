@@ -34,8 +34,8 @@ NoduleInfoTuple = namedtuple(
 )
 MaskTuple = namedtuple(
     'MaskTuple',
-    ("raw_dense_mask, body_mask, air_mask, raw_nodule_mask, nodule_mask, "
-     "lung_mask, mal_mask"))
+    ("raw_dense_mask, dense_mask, body_mask, air_mask, raw_nodule_mask, "
+     "nodule_mask, lung_mask, ben_mask, mal_mask"))
 
 
 # Decorator to wrap a function with a memoizing callable that saves up
@@ -647,4 +647,4 @@ class TrainingLuna2dSegmentationDataset(Luna2dSegmentationDataset):
         else:
             series_uid, ct_ndx = useAugmentation_bool = ndx
 
-        return super.__getitem__((series_uid, ct_ndx, useAugmentation_bool))
+        return super().__getitem__((series_uid, ct_ndx, useAugmentation_bool))

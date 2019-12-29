@@ -74,6 +74,7 @@ class UNet(nn.Module):
                                                 padding, batch_norm))
             prev_channels = 2 ** (wf + i)
 
+        self.up_path = nn.ModuleList()
         for i in reversed(range(depth - 1)):
             self.up_path.append(UNetUpBlock(prev_channels, 2 ** (wf + i),
                                             up_mode, padding, batch_norm))
