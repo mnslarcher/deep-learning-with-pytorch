@@ -28,11 +28,14 @@ log.setLevel(logging.DEBUG)
 
 raw_cache = getCache('part2ch13_raw')
 
-NoduleInfoTuple = namedtuple('NoduleInfoTuple', 'isMalignant_bool',
-                             'diameter_mm', 'series_uid', 'center_xyz')
-MaskTuple = namedtuple('MaskTuple', 'raw_dense_mask', 'body_mask', 'air_mask',
-                       'raw_nodule_mask', 'nodule_mask', 'lung_mask',
-                       'mal_mask')
+NoduleInfoTuple = namedtuple(
+    'NoduleInfoTuple',
+    "isMalignant_bool, diameter_mm, series_uid, center_xyz"
+)
+MaskTuple = namedtuple(
+    'MaskTuple',
+    ("raw_dense_mask, body_mask, air_mask, raw_nodule_mask, nodule_mask, "
+     "lung_mask, mal_mask"))
 
 
 # Decorator to wrap a function with a memoizing callable that saves up
